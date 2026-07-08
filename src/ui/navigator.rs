@@ -149,11 +149,19 @@ fn render_rows(
         let y = body.y + visible_idx as u16;
         let rect = Rect::new(body.x, y, body.width, 1);
         let selected = idx == app.navigator.selected;
-        render_row(app, frame, rect, row, selected);
+        render_row(app, frame, rect, &rows, idx, row, selected);
     }
 }
 
-fn render_row(app: &AppState, frame: &mut Frame, rect: Rect, row: &NavigatorRow, selected: bool) {
+fn render_row(
+    app: &AppState,
+    frame: &mut Frame,
+    rect: Rect,
+    rows: &[NavigatorRow],
+    row_idx: usize,
+    row: &NavigatorRow,
+    selected: bool,
+) {
     let p = &app.palette;
     frame.render_widget(Clear, rect);
     let base_style = if selected {
@@ -183,21 +191,9 @@ fn render_row(app: &AppState, frame: &mut Frame, rect: Rect, row: &NavigatorRow,
         status_style.bg(p.panel_bg)
     };
 
-    let prefix = if row.is_workspace {
-        if row.expanded {
-            "▾"
-        } else {
-            "▸"
-        }
-    } else if row.depth > 0 {
-        "├─"
-    } else {
-        "  "
-    };
-    let current = if row.is_current { "◆" } else { " " };
-    let marker = if selected { "→" } else { " " };
-    let indent = "  ".repeat(row.depth as usize);
-    let left_fixed = format!(" {indent}{prefix} {marker} {current} ");
+    let prefix = navigator_tree_prefix(rows, row_idx);
+    let current = if row.is_current { " ◆" } else { "" };
+    let left_fixed = format!(" {prefix} ");
     let meta_width = metadata_width(rect.width);
     let left_budget = rect
         .width
@@ -209,6 +205,7 @@ fn render_row(app: &AppState, frame: &mut Frame, rect: Rect, row: &NavigatorRow,
     let spans = vec![
         Span::styled(left_fixed, dim_style),
         Span::styled(status_icon, status_style),
+        Span::styled(current, dim_style),
         Span::raw(" "),
         Span::styled(title, text_style),
     ];
@@ -236,6 +233,56 @@ fn render_row(app: &AppState, frame: &mut Frame, rect: Rect, row: &NavigatorRow,
             meta_rect,
         );
     }
+}
+
+fn navigator_tree_prefix(rows: &[NavigatorRow], row_idx: usize) -> String {
+    let Some(row) = rows.get(row_idx) else {
+        return "  ".to_string();
+    };
+    if row.is_workspace {
+        return if row.expanded { "▾" } else { "▸" }.to_string();
+    }
+    if row.depth == 0 {
+        return "  ".to_string();
+    }
+
+    let mut prefix = String::from("  ");
+    for depth in 1..row.depth {
+        if has_later_row_at_depth(rows, row_idx, depth) {
+            prefix.push_str("│ ");
+        } else {
+            prefix.push_str("  ");
+        }
+    }
+    let has_child = has_visible_child(rows, row_idx);
+    let connector = if has_later_row_at_depth(rows, row_idx, row.depth) {
+        if has_child {
+            "├─╮"
+        } else {
+            "├─"
+        }
+    } else if has_child {
+        "╰─╮"
+    } else {
+        "╰─"
+    };
+    prefix.push_str(connector);
+    prefix
+}
+
+fn has_later_row_at_depth(rows: &[NavigatorRow], row_idx: usize, depth: u8) -> bool {
+    rows.iter()
+        .skip(row_idx.saturating_add(1))
+        .take_while(|row| row.depth >= depth)
+        .any(|row| row.depth == depth)
+}
+
+fn has_visible_child(rows: &[NavigatorRow], row_idx: usize) -> bool {
+    let Some(row) = rows.get(row_idx) else {
+        return false;
+    };
+    rows.get(row_idx.saturating_add(1))
+        .is_some_and(|next| next.depth > row.depth)
 }
 
 fn render_navigator_scrollbar(
@@ -469,6 +516,117 @@ fn display_state(state: crate::detect::AgentState, seen: bool) -> &'static str {
         (crate::detect::AgentState::Idle, false) => "done",
         (crate::detect::AgentState::Idle, true) => "idle",
         (crate::detect::AgentState::Unknown, _) => "unknown",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{detect::AgentState, layout::PaneId};
+
+    fn row(depth: u8, target: NavigatorTarget) -> NavigatorRow {
+        NavigatorRow {
+            target,
+            depth,
+            label: String::new(),
+            meta: String::new(),
+            status: AgentState::Unknown,
+            seen: true,
+            is_current: false,
+            is_workspace: depth == 0,
+            is_tab: matches!(depth, 1),
+            expanded: true,
+            search_text: String::new(),
+        }
+    }
+
+    #[test]
+    fn navigator_tree_prefixes_connect_visible_hierarchy() {
+        let rows = vec![
+            row(0, NavigatorTarget::Workspace { ws_idx: 0 }),
+            row(
+                1,
+                NavigatorTarget::Tab {
+                    ws_idx: 0,
+                    tab_idx: 0,
+                },
+            ),
+            row(
+                2,
+                NavigatorTarget::Pane {
+                    ws_idx: 0,
+                    tab_idx: 0,
+                    pane_id: PaneId::from_raw(1),
+                },
+            ),
+            row(
+                2,
+                NavigatorTarget::Pane {
+                    ws_idx: 0,
+                    tab_idx: 0,
+                    pane_id: PaneId::from_raw(2),
+                },
+            ),
+            row(
+                1,
+                NavigatorTarget::Tab {
+                    ws_idx: 0,
+                    tab_idx: 1,
+                },
+            ),
+            row(
+                2,
+                NavigatorTarget::Pane {
+                    ws_idx: 0,
+                    tab_idx: 1,
+                    pane_id: PaneId::from_raw(3),
+                },
+            ),
+        ];
+
+        let prefixes = rows
+            .iter()
+            .enumerate()
+            .map(|(idx, _)| navigator_tree_prefix(&rows, idx))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            prefixes,
+            ["▾", "  ├─╮", "  │ ├─", "  │ ╰─", "  ╰─╮", "    ╰─"]
+        );
+    }
+
+    #[test]
+    fn navigator_tree_prefixes_stop_continuation_at_workspace_boundary() {
+        let rows = vec![
+            row(0, NavigatorTarget::Workspace { ws_idx: 0 }),
+            row(
+                1,
+                NavigatorTarget::Tab {
+                    ws_idx: 0,
+                    tab_idx: 0,
+                },
+            ),
+            row(
+                2,
+                NavigatorTarget::Pane {
+                    ws_idx: 0,
+                    tab_idx: 0,
+                    pane_id: PaneId::from_raw(1),
+                },
+            ),
+            row(0, NavigatorTarget::Workspace { ws_idx: 1 }),
+            row(
+                1,
+                NavigatorTarget::Tab {
+                    ws_idx: 1,
+                    tab_idx: 0,
+                },
+            ),
+        ];
+
+        assert_eq!(navigator_tree_prefix(&rows, 1), "  ╰─╮");
+        assert_eq!(navigator_tree_prefix(&rows, 2), "    ╰─");
     }
 }
 
