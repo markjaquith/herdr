@@ -97,7 +97,8 @@ fn render_search(app: &AppState, frame: &mut Frame, area: Rect) {
     }
     spans.push(Span::styled(
         format!(
-            "{count:>width$} panes",
+            "{:>width$}",
+            pane_count_label(count),
             width = area.width.saturating_sub(16) as usize
         ),
         Style::default().fg(p.overlay0),
@@ -193,7 +194,7 @@ fn render_row(
 
     let prefix = navigator_tree_prefix(rows, row_idx);
     let current = if row.is_current { " ◆" } else { "" };
-    let left_fixed = format!(" {prefix} ");
+    let left_fixed = format!(" {prefix}");
     let meta_width = metadata_width(rect.width);
     let left_budget = rect
         .width
@@ -240,7 +241,7 @@ fn navigator_tree_prefix(rows: &[NavigatorRow], row_idx: usize) -> String {
         return "  ".to_string();
     };
     if row.is_workspace {
-        return if row.expanded { "▾" } else { "▸" }.to_string();
+        return if row.expanded { "▾ " } else { "▸ " }.to_string();
     }
     if row.depth == 0 {
         return "  ".to_string();
@@ -248,23 +249,29 @@ fn navigator_tree_prefix(rows: &[NavigatorRow], row_idx: usize) -> String {
 
     let mut prefix = String::from("  ");
     for depth in 1..row.depth {
-        if has_later_row_at_depth(rows, row_idx, depth) {
+        if depth == row.depth - 1 {
+            prefix.push(if has_later_row_at_depth(rows, row_idx, depth) {
+                '│'
+            } else {
+                ' '
+            });
+        } else if has_later_row_at_depth(rows, row_idx, depth) {
             prefix.push_str("│ ");
         } else {
             prefix.push_str("  ");
         }
     }
     let has_child = has_visible_child(rows, row_idx);
-    let connector = if has_later_row_at_depth(rows, row_idx, row.depth) {
-        if has_child {
-            "├─╮"
-        } else {
-            "├─"
-        }
-    } else if has_child {
-        "╰─╮"
-    } else {
-        "╰─"
+    let has_later_sibling = has_later_row_at_depth(rows, row_idx, row.depth);
+    let connector = match (row.depth == 1, has_later_sibling, has_child) {
+        (true, true, true) => "├╮",
+        (true, true, false) => "├─",
+        (true, false, true) => "╰╮",
+        (true, false, false) => "╰─",
+        (false, true, true) => "├╮ ",
+        (false, true, false) => "├─ ",
+        (false, false, true) => "╰╮ ",
+        (false, false, false) => "╰─ ",
     };
     prefix.push_str(connector);
     prefix
@@ -332,6 +339,14 @@ fn metadata_width(width: u16) -> u16 {
     }
 }
 
+fn pane_count_label(count: usize) -> String {
+    if count == 1 {
+        "1 pane".to_string()
+    } else {
+        format!("{count} panes")
+    }
+}
+
 fn render_detail(
     app: &AppState,
     terminal_runtimes: &TerminalRuntimeRegistry,
@@ -381,7 +396,7 @@ fn workspace_detail(
     };
     let label = ws.display_name_from(&app.terminals, terminal_runtimes);
     let pane_count = ws.tabs.iter().map(|tab| tab.panes.len()).sum::<usize>();
-    let mut parts = vec![label, format!("{pane_count} panes")];
+    let mut parts = vec![label, pane_count_label(pane_count)];
     if !rowless_workspace_activity(app, terminal_runtimes, ws_idx).is_empty() {
         parts.push(rowless_workspace_activity(app, terminal_runtimes, ws_idx));
     }
@@ -407,7 +422,7 @@ fn tab_detail(
             ws.tab_display_name(tab_idx)
                 .unwrap_or_else(|| (tab_idx + 1).to_string())
         ),
-        format!("{} panes", tab.panes.len()),
+        pane_count_label(tab.panes.len()),
     ];
     let rows = app.navigator_rows_from(terminal_runtimes);
     if let Some(meta) = rows
@@ -592,7 +607,7 @@ mod tests {
 
         assert_eq!(
             prefixes,
-            ["▾", "  ├─╮", "  │ ├─", "  │ ╰─", "  ╰─╮", "    ╰─"]
+            ["▾ ", "  ├╮", "  │├─ ", "  │╰─ ", "  ╰╮", "   ╰─ "]
         );
     }
 
@@ -625,8 +640,8 @@ mod tests {
             ),
         ];
 
-        assert_eq!(navigator_tree_prefix(&rows, 1), "  ╰─╮");
-        assert_eq!(navigator_tree_prefix(&rows, 2), "    ╰─");
+        assert_eq!(navigator_tree_prefix(&rows, 1), "  ╰╮");
+        assert_eq!(navigator_tree_prefix(&rows, 2), "   ╰─ ");
     }
 }
 

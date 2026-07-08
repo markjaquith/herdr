@@ -463,9 +463,9 @@ impl AppState {
         let activity = tab_activity_summary(tab, &self.terminals);
         let pane_count = tab.panes.len();
         let meta = if activity.is_empty() {
-            format!("{pane_count} panes")
+            pane_count_label(pane_count)
         } else {
-            format!("{pane_count} panes · {activity}")
+            format!("{} · {activity}", pane_count_label(pane_count))
         };
         let search_text = format!("{label} {meta}").to_lowercase();
         NavigatorRow {
@@ -783,6 +783,14 @@ fn state_label_text(state: AgentState, seen: bool) -> &'static str {
         (AgentState::Idle, false) => "done",
         (AgentState::Idle, true) => "idle",
         (AgentState::Unknown, _) => "unknown",
+    }
+}
+
+fn pane_count_label(count: usize) -> String {
+    if count == 1 {
+        "1 pane".to_string()
+    } else {
+        format!("{count} panes")
     }
 }
 
@@ -3202,6 +3210,19 @@ mod tests {
                 tab_idx: 1
             }
         )));
+        let first_tab = rows
+            .iter()
+            .find(|row| {
+                matches!(
+                    row.target,
+                    crate::app::state::NavigatorTarget::Tab {
+                        ws_idx: 1,
+                        tab_idx: 0
+                    }
+                )
+            })
+            .unwrap();
+        assert_eq!(first_tab.meta, "1 pane");
     }
 
     #[tokio::test]
