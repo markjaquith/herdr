@@ -462,10 +462,14 @@ impl AppState {
         let (status, seen) = tab_aggregate_state(tab, &self.terminals);
         let activity = tab_activity_summary(tab, &self.terminals);
         let pane_count = tab.panes.len();
+        let pane_count_label = format!(
+            "{pane_count} pane{}",
+            if pane_count == 1 { "" } else { "s" }
+        );
         let meta = if activity.is_empty() {
-            pane_count_label(pane_count)
+            pane_count_label
         } else {
-            format!("{} · {activity}", pane_count_label(pane_count))
+            format!("{pane_count_label} · {activity}")
         };
         let search_text = format!("{label} {meta}").to_lowercase();
         NavigatorRow {
@@ -783,14 +787,6 @@ fn state_label_text(state: AgentState, seen: bool) -> &'static str {
         (AgentState::Idle, false) => "done",
         (AgentState::Idle, true) => "idle",
         (AgentState::Unknown, _) => "unknown",
-    }
-}
-
-fn pane_count_label(count: usize) -> String {
-    if count == 1 {
-        "1 pane".to_string()
-    } else {
-        format!("{count} panes")
     }
 }
 
